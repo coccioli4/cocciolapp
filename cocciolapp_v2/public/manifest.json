@@ -1,0 +1,9 @@
+{
+  "name": "CocciolApp",
+  "short_name": "CocciolApp",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7",
+  "icons": []
+}
