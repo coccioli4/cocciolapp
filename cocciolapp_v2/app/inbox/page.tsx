@@ -23,6 +23,55 @@ function todayDate() {
   return new Date().toISOString().split("T")[0];
 }
 
+function parseExpense(text: string) {
+  const match = text.match(/(.+?)\s+(\d+[.,]?\d*)$/);
+
+  const description = match ? match[1].trim() : text.trim();
+  const amount = match ? Number(match[2].replace(",", ".")) : 0;
+
+  const lower = description.toLowerCase();
+
+  let category = "Da classificare";
+
+  if (
+    lower.includes("esselunga") ||
+    lower.includes("coop") ||
+    lower.includes("conad") ||
+    lower.includes("lidl") ||
+    lower.includes("eurospin") ||
+    lower.includes("alimentari")
+  ) {
+    category = "Alimentari";
+  } else if (
+    lower.includes("volvo") ||
+    lower.includes("benzina") ||
+    lower.includes("diesel") ||
+    lower.includes("tagliando") ||
+    lower.includes("gomme") ||
+    lower.includes("auto") ||
+    lower.includes("moto") ||
+    lower.includes("mp3")
+  ) {
+    category = "Auto";
+  } else if (
+    lower.includes("asilo") ||
+    lower.includes("pediatra") ||
+    lower.includes("marco") ||
+    lower.includes("farmacia")
+  ) {
+    category = "Marco";
+  } else if (
+    lower.includes("ikea") ||
+    lower.includes("leroy") ||
+    lower.includes("casa") ||
+    lower.includes("caldaia")
+  ) {
+    category = "Casa";
+  }
+
+  return { description, amount, category };
+}
+
 export default function InboxPage() {
   const [text, setText] = useState("");
   const [items, setItems] = useState<InboxItem[]>([]);
@@ -56,7 +105,7 @@ export default function InboxPage() {
     const { error } = await supabase.from("inbox").insert({
       id: Date.now(),
       text: cleanText,
-      created_at: new Date().toLocaleString("it-IT"),
+      created_at: new Date().toISOString(),
     });
 
     if (error) {
@@ -87,7 +136,7 @@ export default function InboxPage() {
     const { error } = await supabase.from("reminders").insert({
       id: Date.now(),
       text: item.text,
-      created_at: new Date().toLocaleString("it-IT"),
+      created_at: new Date().toISOString(),
       completed: false,
     });
 
@@ -101,11 +150,14 @@ export default function InboxPage() {
   }
 
   async function transformToExpense(item: InboxItem) {
+    const parsed = parseExpense(item.text);
+
     const { error } = await supabase.from("expenses").insert({
       id: Date.now(),
       text: item.text,
-      amount: null,
-      category: "Da classificare",
+      description: parsed.description,
+      amount: parsed.amount,
+      category: parsed.category,
       paid_by: "Famiglia",
       created_at: new Date().toISOString(),
     });
@@ -176,7 +228,7 @@ export default function InboxPage() {
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Es. comprare latte, pediatra Marco, tagliando Volvo..."
+              placeholder="Es. esselunga 42, comprare latte, tagliando Volvo..."
               className="h-32 w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
             />
 
