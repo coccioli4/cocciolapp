@@ -3,77 +3,99 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
-import { CheckCircle2, Circle, Trash2, Bell } from "lucide-react";
+import {
+  CheckCircle2,
+  Circle,
+  Trash2,
+  Bell,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 type Reminder = {
   id: number;
   text: string;
-  createdAt: string;
+  created_at: string;
   completed: boolean;
-  completedAt?: string;
+  completed_at?: string;
 };
 
-const STORAGE_KEY = "cocciolapp_reminders";
 const FORTY_EIGHT_HOURS = 48 * 60 * 60 * 1000;
 
 export default function RemindersPage() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
+  async function loadReminders() {
+    const { data, error } = await supabase
+      .from("reminders")
+      .select("*")
+      .order("id", { ascending: false });
 
-    if (saved) {
-      const parsed: Reminder[] = JSON.parse(saved);
+    if (error) {
+      console.error(error);
+      return;
+    }
 
-      const cleaned = parsed.filter((reminder) => {
+    const cleaned =
+      data?.filter((reminder) => {
         if (!reminder.completed) return true;
-        if (!reminder.completedAt) return true;
+        if (!reminder.completed_at) return true;
 
         const completedTime = new Date(
-          reminder.completedAt
+          reminder.completed_at
         ).getTime();
 
-        return Date.now() - completedTime < FORTY_EIGHT_HOURS;
-      });
+        return (
+          Date.now() - completedTime <
+          FORTY_EIGHT_HOURS
+        );
+      }) || [];
 
-      setReminders(cleaned);
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(cleaned)
-      );
-    }
+    setReminders(cleaned);
+  }
+
+  useEffect(() => {
+    loadReminders();
   }, []);
 
-  function saveReminders(next: Reminder[]) {
-    setReminders(next);
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(next)
+  async function toggleReminder(id: number) {
+    const reminder = reminders.find(
+      (r) => r.id === id
     );
-  }
 
-  function toggleReminder(id: number) {
-    const next = reminders.map((reminder) => {
-      if (reminder.id !== id) return reminder;
+    if (!reminder) return;
 
-      const completed = !reminder.completed;
+    const completed = !reminder.completed;
 
-      return {
-        ...reminder,
+    const { error } = await supabase
+      .from("reminders")
+      .update({
         completed,
-        completedAt: completed
+        completed_at: completed
           ? new Date().toISOString()
-          : undefined,
-      };
-    });
+          : null,
+      })
+      .eq("id", id);
 
-    saveReminders(next);
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    loadReminders();
   }
 
-  function deleteReminder(id: number) {
-    saveReminders(
-      reminders.filter((reminder) => reminder.id !== id)
-    );
+  async function deleteReminder(id: number) {
+    const { error } = await supabase
+      .from("reminders")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    loadReminders();
   }
 
   const openReminders = reminders.filter(
@@ -150,7 +172,8 @@ export default function RemindersPage() {
                       </p>
 
                       <p className="mt-1 text-xs text-zinc-500">
-                        Creato il {reminder.createdAt}
+                        Creato il{" "}
+                        {reminder.created_at}
                       </p>
                     </div>
 
