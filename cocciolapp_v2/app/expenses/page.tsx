@@ -4,20 +4,19 @@ import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
 import { Trash2, Wallet } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-type PaidBy = "Gianluca" | "Silvia" | "Famiglia";
 type Period = "current" | "previous" | "all";
 
 type ExpenseItem = {
   id: number;
-  description: string;
-  amount: number;
-  paidBy: PaidBy;
-  category: string;
-  createdAt: string;
+  text: string | null;
+  description: string | null;
+  amount: number | string | null;
+  paid_by: string | null;
+  category: string | null;
+  created_at: string;
 };
-
-const STORAGE_KEY = "cocciolapp_expenses";
 
 const categories = [
   "Da classificare",
@@ -29,6 +28,12 @@ const categories = [
   "Sport",
   "Tempo libero",
 ];
+
+const paidByOptions = ["Gianluca", "Silvia", "Famiglia"];
+
+function amountValue(expense: ExpenseItem) {
+  return Number(expense.amount || 0);
+}
 
 function isCurrentMonth(dateText: string) {
   const date = new Date(dateText);
@@ -43,7 +48,6 @@ function isCurrentMonth(dateText: string) {
 function isPreviousMonth(dateText: string) {
   const date = new Date(dateText);
   const now = new Date();
-
   const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
   return (
@@ -55,62 +59,93 @@ function isPreviousMonth(dateText: string) {
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
   const [period, setPeriod] = useState<Period>("current");
+  const [status, setStatus] = useState("");
+
+  async function loadExpenses() {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .order("id", { ascending: false });
+
+    if (error) {
+      setStatus("Errore nel caricamento spese");
+      console.error(error);
+      return;
+    }
+
+    setExpenses(data || []);
+  }
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) setExpenses(JSON.parse(saved));
+    loadExpenses();
   }, []);
 
-  function saveExpenses(next: ExpenseItem[]) {
-    setExpenses(next);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  async function deleteExpense(id: number) {
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+
+    if (error) {
+      setStatus("Errore eliminazione spesa");
+      console.error(error);
+      return;
+    }
+
+    loadExpenses();
   }
 
-  function deleteExpense(id: number) {
-    saveExpenses(expenses.filter((e) => e.id !== id));
-  }
-
-  function updateExpense(
+  async function updateExpense(
     id: number,
-    field: "category" | "paidBy",
+    field: "description" | "amount" | "category" | "paid_by",
     value: string
   ) {
-    const next = expenses.map((expense) =>
-      expense.id === id ? { ...expense, [field]: value } : expense
-    );
+    const updateValue =
+      field === "amount" ? Number(value.replace(",", ".")) || 0 : value;
 
-    saveExpenses(next);
+    const { error } = await supabase
+      .from("expenses")
+      .update({ [field]: updateValue })
+      .eq("id", id);
+
+    if (error) {
+      setStatus("Errore aggiornamento spesa");
+      console.error(error);
+      return;
+    }
+
+    loadExpenses();
   }
 
   const filteredExpenses = expenses.filter((expense) => {
     if (period === "all") return true;
-    if (period === "current") return isCurrentMonth(expense.createdAt);
-    if (period === "previous") return isPreviousMonth(expense.createdAt);
+    if (period === "current") return isCurrentMonth(expense.created_at);
+    if (period === "previous") return isPreviousMonth(expense.created_at);
     return true;
   });
 
-  const total = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const total = filteredExpenses.reduce(
+    (sum, expense) => sum + amountValue(expense),
+    0
+  );
 
   const gianlucaTotal = filteredExpenses
-    .filter((e) => e.paidBy === "Gianluca")
-    .reduce((sum, e) => sum + e.amount, 0);
+    .filter((expense) => expense.paid_by === "Gianluca")
+    .reduce((sum, expense) => sum + amountValue(expense), 0);
 
   const silviaTotal = filteredExpenses
-    .filter((e) => e.paidBy === "Silvia")
-    .reduce((sum, e) => sum + e.amount, 0);
+    .filter((expense) => expense.paid_by === "Silvia")
+    .reduce((sum, expense) => sum + amountValue(expense), 0);
 
   const familyTotal = filteredExpenses
-    .filter((e) => e.paidBy === "Famiglia")
-    .reduce((sum, e) => sum + e.amount, 0);
+    .filter((expense) => expense.paid_by === "Famiglia")
+    .reduce((sum, expense) => sum + amountValue(expense), 0);
 
   const categoryTotals = categories
     .map((category) => ({
       category,
       total: filteredExpenses
-        .filter((e) => e.category === category)
-        .reduce((sum, e) => sum + e.amount, 0),
+        .filter((expense) => expense.category === category)
+        .reduce((sum, expense) => sum + amountValue(expense), 0),
     }))
-    .filter((c) => c.total > 0);
+    .filter((item) => item.total > 0);
 
   return (
     <AppShell>
@@ -122,7 +157,7 @@ export default function ExpensesPage() {
         <h1 className="mt-1 text-4xl font-black tracking-tight">Spese</h1>
 
         <p className="mt-2 text-sm text-zinc-500">
-          Spese familiari divise per mese, categoria e persona.
+          Spese familiari sincronizzate con Supabase.
         </p>
 
         <div className="mt-6 grid grid-cols-3 gap-2">
@@ -193,14 +228,23 @@ export default function ExpensesPage() {
             <p className="mb-3 font-bold">Totali per categoria</p>
 
             <div className="space-y-2">
-              {categoryTotals.map((c) => (
-                <div key={c.category} className="flex justify-between text-sm">
-                  <span>{c.category}</span>
-                  <span className="font-bold">€ {c.total.toFixed(2)}</span>
+              {categoryTotals.map((item) => (
+                <div
+                  key={item.category}
+                  className="flex justify-between text-sm"
+                >
+                  <span>{item.category}</span>
+                  <span className="font-bold">
+                    € {item.total.toFixed(2)}
+                  </span>
                 </div>
               ))}
             </div>
           </Card>
+        )}
+
+        {status && (
+          <p className="mt-3 text-center text-xs text-zinc-500">{status}</p>
         )}
 
         <div className="mt-6 space-y-3">
@@ -217,15 +261,36 @@ export default function ExpensesPage() {
                   <Wallet size={20} className="mt-1 text-blue-500" />
 
                   <div className="flex-1">
-                    <p className="font-semibold">{expense.description}</p>
+                    <input
+                      value={
+                        expense.description ||
+                        expense.text ||
+                        ""
+                      }
+                      onChange={(e) =>
+                        updateExpense(
+                          expense.id,
+                          "description",
+                          e.target.value
+                        )
+                      }
+                      className="w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm font-semibold"
+                      placeholder="Descrizione"
+                    />
 
-                    <p className="mt-1 text-lg font-black">
-                      € {expense.amount.toFixed(2)}
-                    </p>
+                    <input
+                      value={String(expense.amount || "")}
+                      onChange={(e) =>
+                        updateExpense(expense.id, "amount", e.target.value)
+                      }
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-lg font-black"
+                      placeholder="Importo"
+                      inputMode="decimal"
+                    />
 
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <select
-                        value={expense.category}
+                        value={expense.category || "Da classificare"}
                         onChange={(e) =>
                           updateExpense(expense.id, "category", e.target.value)
                         }
@@ -239,20 +304,22 @@ export default function ExpensesPage() {
                       </select>
 
                       <select
-                        value={expense.paidBy}
+                        value={expense.paid_by || "Famiglia"}
                         onChange={(e) =>
-                          updateExpense(expense.id, "paidBy", e.target.value)
+                          updateExpense(expense.id, "paid_by", e.target.value)
                         }
                         className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
                       >
-                        <option value="Gianluca">Gianluca</option>
-                        <option value="Silvia">Silvia</option>
-                        <option value="Famiglia">Famiglia</option>
+                        {paidByOptions.map((person) => (
+                          <option key={person} value={person}>
+                            {person}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
                     <p className="mt-2 text-xs text-zinc-400">
-                      {expense.createdAt}
+                      {new Date(expense.created_at).toLocaleString("it-IT")}
                     </p>
                   </div>
 
