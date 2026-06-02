@@ -3,45 +3,37 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
-import {
-  Bell,
-  CalendarDays,
-  Home,
-  ShoppingCart,
-  Wallet,
-  Wrench,
-} from "lucide-react";
+import { Bell, CalendarDays, Wallet, Wrench } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-type EventItem = {
-  id: number;
-  title: string;
-  date: string;
-  time: string;
-  category: string;
-  createdAt: string;
-};
-
-type ReminderItem = {
+type Reminder = {
   id: number;
   text: string;
-  createdAt: string;
   completed: boolean;
 };
 
-type ExpenseItem = {
+type Expense = {
   id: number;
-  description: string;
-  amount: number;
-  paidBy: "Gianluca" | "Silvia" | "Famiglia";
-  category: string;
-  createdAt: string;
+  amount: number | string | null;
+  created_at: string;
 };
 
-const EVENTS_KEY = "cocciolapp_events";
-const REMINDERS_KEY = "cocciolapp_reminders";
-const EXPENSES_KEY = "cocciolapp_expenses";
+type Maintenance = {
+  id: number;
+  text: string;
+  due_date: string | null;
+  completed: boolean;
+};
 
-function todayText() {
+type CalendarItem = {
+  id: number;
+  text: string;
+  date: string | null;
+  time: string | null;
+  category: string | null;
+};
+
+function todayDate() {
   return new Date().toISOString().split("T")[0];
 }
 
@@ -51,53 +43,74 @@ function addDays(days: number) {
   return date.toISOString().split("T")[0];
 }
 
+function isCurrentMonth(dateText: string) {
+  const date = new Date(dateText);
+  const now = new Date();
+  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+}
+
+function formatDate(dateText: string | null) {
+  if (!dateText) return "Senza data";
+  return new Date(dateText).toLocaleDateString("it-IT");
+}
+
 export default function HomePage() {
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [reminders, setReminders] = useState<ReminderItem[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [maintenance, setMaintenance] = useState<Maintenance[]>([]);
+  const [calendar, setCalendar] = useState<CalendarItem[]>([]);
+
+  async function loadData() {
+    const [remindersRes, expensesRes, maintenanceRes, calendarRes] =
+      await Promise.all([
+        supabase.from("reminders").select("*").order("id", { ascending: false }),
+        supabase.from("expenses").select("*").order("id", { ascending: false }),
+        supabase.from("maintenance").select("*").order("due_date", { ascending: true }),
+        supabase.from("calendar").select("*").order("date", { ascending: true }),
+      ]);
+
+    if (!remindersRes.error) setReminders(remindersRes.data || []);
+    if (!expensesRes.error) setExpenses(expensesRes.data || []);
+    if (!maintenanceRes.error) setMaintenance(maintenanceRes.data || []);
+    if (!calendarRes.error) setCalendar(calendarRes.data || []);
+  }
 
   useEffect(() => {
-    const savedEvents = window.localStorage.getItem(EVENTS_KEY);
-    const savedReminders = window.localStorage.getItem(REMINDERS_KEY);
-    const savedExpenses = window.localStorage.getItem(EXPENSES_KEY);
-
-    if (savedEvents) setEvents(JSON.parse(savedEvents));
-    if (savedReminders) setReminders(JSON.parse(savedReminders));
-    if (savedExpenses) setExpenses(JSON.parse(savedExpenses));
+    loadData();
   }, []);
 
-  const today = todayText();
+  const today = todayDate();
   const next7 = addDays(7);
+  const next30 = addDays(30);
 
-  const todayEvents = events
-    .filter((event) => event.date === today)
-    .sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
+  const openReminders = reminders.filter((item) => !item.completed);
 
-  const nextEvents = events
-    .filter((event) => event.date > today && event.date <= next7)
-    .sort((a, b) =>
-      `${a.date}T${a.time || "00:00"}`.localeCompare(
-        `${b.date}T${b.time || "00:00"}`
-      )
-    );
+  const monthlyTotal = expenses
+    .filter((item) => item.created_at && isCurrentMonth(item.created_at))
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
-  const openReminders = reminders.filter((r) => !r.completed);
-
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
-
-  const monthlyExpenses = expenses.filter((expense) => {
-    const date = new Date(expense.createdAt);
-    return (
-      date.getMonth() === currentMonth &&
-      date.getFullYear() === currentYear
-    );
-  });
-
-  const monthlyTotal = monthlyExpenses.reduce(
-    (sum, expense) => sum + expense.amount,
-    0
+  const overdueMaintenance = maintenance.filter(
+    (item) => !item.completed && item.due_date && item.due_date < today
   );
+
+  const upcomingMaintenance = maintenance
+    .filter(
+      (item) =>
+        !item.completed &&
+        item.due_date &&
+        item.due_date >= today &&
+        item.due_date <= next30
+    )
+    .slice(0, 5);
+
+  const nextEvents = calendar
+    .filter((item) => item.date && item.date >= today && item.date <= next7)
+    .sort((a, b) =>
+      `${a.date || ""}T${a.time || "00:00"}`.localeCompare(
+        `${b.date || ""}T${b.time || "00:00"}`
+      )
+    )
+    .slice(0, 5);
 
   return (
     <AppShell>
@@ -117,120 +130,108 @@ export default function HomePage() {
         <div className="mt-6 grid grid-cols-2 gap-3">
           <Card className="bg-gradient-to-br from-red-50 to-rose-100">
             <Bell className="text-red-500" />
-            <p className="mt-3 text-3xl font-black">
-              {openReminders.length}
-            </p>
+            <p className="mt-3 text-3xl font-black">{openReminders.length}</p>
             <p className="text-sm font-semibold text-red-600">
-              Promemoria
-            </p>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-violet-50 to-indigo-100">
-            <Wrench className="text-violet-500" />
-            <p className="mt-3 text-3xl font-black">0</p>
-            <p className="text-sm font-semibold text-violet-600">
-              Manutenzioni
+              Promemoria aperti
             </p>
           </Card>
 
           <Card className="bg-gradient-to-br from-blue-50 to-sky-100">
             <Wallet className="text-blue-500" />
             <p className="mt-3 text-3xl font-black">
-              € {monthlyTotal.toFixed(0)}
+              € {monthlyTotal.toFixed(2)}
             </p>
             <p className="text-sm font-semibold text-blue-600">
               Spese mese
             </p>
           </Card>
 
+          <Card className="bg-gradient-to-br from-violet-50 to-indigo-100">
+            <Wrench className="text-violet-500" />
+            <p className="mt-3 text-3xl font-black">
+              {overdueMaintenance.length}
+            </p>
+            <p className="text-sm font-semibold text-violet-600">
+              Manutenzioni scadute
+            </p>
+          </Card>
+
           <Card className="bg-gradient-to-br from-green-50 to-emerald-100">
-            <ShoppingCart className="text-green-500" />
-            <p className="mt-3 text-3xl font-black">0</p>
+            <CalendarDays className="text-green-500" />
+            <p className="mt-3 text-3xl font-black">{nextEvents.length}</p>
             <p className="text-sm font-semibold text-green-600">
-              Lista spesa
+              Eventi 7 giorni
             </p>
           </Card>
         </div>
 
-        <Card className="mt-6">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xl font-bold">Oggi</h2>
-            <CalendarDays className="text-blue-500" />
+        <div className="mt-8">
+          <h2 className="text-lg font-bold">Prossimi eventi</h2>
+
+          <div className="mt-3 space-y-3">
+            {nextEvents.length === 0 ? (
+              <Card>
+                <p className="text-sm text-zinc-500">
+                  Nessun evento nei prossimi 7 giorni.
+                </p>
+              </Card>
+            ) : (
+              nextEvents.map((item) => (
+                <Card key={item.id}>
+                  <p className="font-semibold">{item.text}</p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {formatDate(item.date)}
+                    {item.time ? ` · ${item.time}` : ""}
+                    {item.category ? ` · ${item.category}` : ""}
+                  </p>
+                </Card>
+              ))
+            )}
           </div>
+        </div>
 
-          {todayEvents.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              Nessun evento per oggi.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {todayEvents.map((event) => (
-                <div
-                  key={event.id}
-                  className="border-l-4 border-blue-500 pl-3"
-                >
-                  <p className="font-bold">{event.title}</p>
-                  <p className="text-sm text-zinc-500">
-                    {event.time || "Tutto il giorno"} · {event.category}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+        <div className="mt-8">
+          <h2 className="text-lg font-bold">Promemoria aperti</h2>
 
-        <Card className="mt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xl font-bold">
-              Prossimi 7 giorni
-            </h2>
-            <Home className="text-zinc-400" />
+          <div className="mt-3 space-y-3">
+            {openReminders.length === 0 ? (
+              <Card>
+                <p className="text-sm text-zinc-500">
+                  Nessun promemoria aperto.
+                </p>
+              </Card>
+            ) : (
+              openReminders.slice(0, 5).map((item) => (
+                <Card key={item.id}>
+                  <p className="font-semibold">{item.text}</p>
+                </Card>
+              ))
+            )}
           </div>
+        </div>
 
-          {nextEvents.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              Nessun evento nei prossimi 7 giorni.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {nextEvents.map((event) => (
-                <div
-                  key={event.id}
-                  className="border-l-4 border-purple-500 pl-3"
-                >
-                  <p className="font-bold">{event.title}</p>
-                  <p className="text-sm text-zinc-500">
-                    {event.date}
-                    {event.time ? ` · ${event.time}` : ""} · {event.category}
+        <div className="mt-8">
+          <h2 className="text-lg font-bold">Manutenzioni in scadenza</h2>
+
+          <div className="mt-3 space-y-3">
+            {upcomingMaintenance.length === 0 ? (
+              <Card>
+                <p className="text-sm text-zinc-500">
+                  Nessuna manutenzione nei prossimi 30 giorni.
+                </p>
+              </Card>
+            ) : (
+              upcomingMaintenance.map((item) => (
+                <Card key={item.id}>
+                  <p className="font-semibold">{item.text}</p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Scadenza: {formatDate(item.due_date)}
                   </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        <Card className="mt-4">
-          <h2 className="mb-3 text-xl font-bold">
-            Promemoria urgenti
-          </h2>
-
-          {openReminders.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              Nessun promemoria aperto.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {openReminders.slice(0, 3).map((reminder) => (
-                <div key={reminder.id}>
-                  <p className="font-semibold">{reminder.text}</p>
-                  <p className="text-xs text-zinc-500">
-                    Creato il {reminder.createdAt}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+                </Card>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </AppShell>
   );
