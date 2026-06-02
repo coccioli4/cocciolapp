@@ -191,7 +191,7 @@ export default function InboxPage() {
   }
 
   async function transformToEvent(item: InboxItem) {
-    const { error } = await supabase.from("events").insert({
+    const { error } = await supabase.from("calendar").insert({
       id: Date.now(),
       text: item.text,
       date: todayDate(),

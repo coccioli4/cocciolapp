@@ -3,27 +3,20 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
-import { CheckCircle2, Trash2, Wrench } from "lucide-react";
+import { CheckCircle2, Circle, Trash2, Wrench } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 type MaintenanceItem = {
   id: number;
-  title: string;
-  category: string;
-  dueDate: string;
-  frequencyMonths: number;
-  createdAt: string;
+  text: string;
+  category: string | null;
+  due_date: string | null;
+  frequency_months: number | null;
+  completed: boolean;
+  created_at: string;
 };
 
-const STORAGE_KEY = "cocciolapp_maintenance";
-
-const categories = [
-  "Casa",
-  "Auto",
-  "Caldaia",
-  "Filtri",
-  "Climatizzatori",
-  "Altro",
-];
+const categories = ["Casa", "Auto", "Moto", "Giardino", "Documenti", "Altro"];
 
 function addMonths(dateText: string, months: number) {
   const date = new Date(dateText);
@@ -31,226 +24,265 @@ function addMonths(dateText: string, months: number) {
   return date.toISOString().split("T")[0];
 }
 
-function daysUntil(dateText: string) {
-  const today = new Date();
-  const target = new Date(dateText);
-  today.setHours(0, 0, 0, 0);
-  target.setHours(0, 0, 0, 0);
+function isOverdue(dateText: string | null) {
+  if (!dateText) return false;
+  const today = new Date().toISOString().split("T")[0];
+  return dateText < today;
+}
 
-  return Math.ceil(
-    (target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-  );
+function formatDate(dateText: string | null) {
+  if (!dateText) return "Nessuna scadenza";
+  return new Date(dateText).toLocaleDateString("it-IT");
 }
 
 export default function MaintenancePage() {
   const [items, setItems] = useState<MaintenanceItem[]>([]);
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("Casa");
-  const [dueDate, setDueDate] = useState("");
-  const [frequencyMonths, setFrequencyMonths] = useState(6);
+  const [status, setStatus] = useState("");
+
+  async function loadItems() {
+    const { data, error } = await supabase
+      .from("maintenance")
+      .select("*")
+      .order("due_date", { ascending: true });
+
+    if (error) {
+      setStatus("Errore nel caricamento manutenzioni");
+      console.error(error);
+      return;
+    }
+
+    setItems(data || []);
+  }
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) setItems(JSON.parse(saved));
+    loadItems();
   }, []);
 
-  function saveItems(next: MaintenanceItem[]) {
-    setItems(next);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  async function updateItem(
+    id: number,
+    field: "text" | "category" | "due_date" | "frequency_months",
+    value: string
+  ) {
+    const updateValue =
+      field === "frequency_months" ? Number(value) || 0 : value || null;
+
+    const { error } = await supabase
+      .from("maintenance")
+      .update({ [field]: updateValue })
+      .eq("id", id);
+
+    if (error) {
+      setStatus("Errore aggiornamento manutenzione");
+      console.error(error);
+      return;
+    }
+
+    loadItems();
   }
 
-  function addItem() {
-    if (!title.trim() || !dueDate) return;
+  async function completeItem(item: MaintenanceItem) {
+    const frequency = item.frequency_months || 12;
+    const baseDate = item.due_date || new Date().toISOString().split("T")[0];
+    const nextDate = addMonths(baseDate, frequency);
 
-    const newItem: MaintenanceItem = {
-      id: Date.now(),
-      title: title.trim(),
-      category,
-      dueDate,
-      frequencyMonths,
-      createdAt: new Date().toLocaleString("it-IT"),
-    };
+    const { error } = await supabase
+      .from("maintenance")
+      .update({
+        completed: false,
+        due_date: nextDate,
+      })
+      .eq("id", item.id);
 
-    saveItems([newItem, ...items]);
-    setTitle("");
-    setDueDate("");
-    setFrequencyMonths(6);
+    if (error) {
+      setStatus("Errore completamento manutenzione");
+      console.error(error);
+      return;
+    }
+
+    setStatus("Manutenzione completata e nuova scadenza aggiornata");
+    loadItems();
   }
 
-  function completeItem(id: number) {
-    const next = items.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            dueDate: addMonths(item.dueDate, item.frequencyMonths),
-          }
-        : item
-    );
+  async function toggleCompleted(item: MaintenanceItem) {
+    const { error } = await supabase
+      .from("maintenance")
+      .update({
+        completed: !item.completed,
+      })
+      .eq("id", item.id);
 
-    saveItems(next);
+    if (error) {
+      setStatus("Errore aggiornamento stato");
+      console.error(error);
+      return;
+    }
+
+    loadItems();
   }
 
-  function deleteItem(id: number) {
-    saveItems(items.filter((item) => item.id !== id));
+  async function deleteItem(id: number) {
+    const { error } = await supabase.from("maintenance").delete().eq("id", id);
+
+    if (error) {
+      setStatus("Errore eliminazione manutenzione");
+      console.error(error);
+      return;
+    }
+
+    loadItems();
   }
 
-  const sortedItems = [...items].sort(
-    (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
-  );
-
-  const urgentItems = sortedItems.filter((item) => daysUntil(item.dueDate) <= 30);
+  const openItems = items.filter((item) => !item.completed);
+  const overdueItems = openItems.filter((item) => isOverdue(item.due_date));
 
   return (
     <AppShell>
       <div className="px-5 pt-8 pb-32">
-        <p className="text-sm font-semibold text-blue-500">Famiglia Coccioli</p>
+        <p className="text-sm font-semibold text-blue-500">
+          Famiglia Coccioli
+        </p>
 
         <h1 className="mt-1 text-4xl font-black tracking-tight">
           Manutenzioni
         </h1>
 
         <p className="mt-2 text-sm text-zinc-500">
-          Casa, auto, filtri, caldaia e scadenze periodiche.
+          Scadenze periodiche per casa, auto, moto e famiglia.
         </p>
 
-        <Card className="mt-6 bg-gradient-to-br from-violet-50 to-indigo-100">
-          <div className="flex items-center gap-3">
-            <div className="rounded-full bg-white p-3 text-violet-500 shadow-sm">
-              <Wrench size={22} />
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Card className="bg-gradient-to-br from-violet-50 to-purple-100">
+            <div className="flex items-center gap-3">
+              <div className="rounded-full bg-white p-3 text-violet-500 shadow-sm">
+                <Wrench size={22} />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-violet-700">
+                  Aperte
+                </p>
+                <p className="text-3xl font-black">{openItems.length}</p>
+              </div>
             </div>
+          </Card>
 
-            <div>
-              <p className="text-sm font-semibold text-violet-700">
-                In scadenza entro 30 giorni
-              </p>
-              <p className="text-3xl font-black">{urgentItems.length}</p>
-            </div>
-          </div>
-        </Card>
+          <Card className="bg-gradient-to-br from-red-50 to-orange-100">
+            <p className="text-sm font-semibold text-red-600">Scadute</p>
+            <p className="mt-2 text-3xl font-black">{overdueItems.length}</p>
+          </Card>
+        </div>
 
-        <Card className="mt-6">
-          <h2 className="text-lg font-bold">Nuova manutenzione</h2>
-
-          <div className="mt-4 space-y-3">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Es. Filtro Maunawai, tagliando Volvo..."
-              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
-            />
-
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base"
-            >
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
-            />
-
-            <select
-              value={frequencyMonths}
-              onChange={(e) => setFrequencyMonths(Number(e.target.value))}
-              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base"
-            >
-              <option value={1}>Ogni mese</option>
-              <option value={3}>Ogni 3 mesi</option>
-              <option value={6}>Ogni 6 mesi</option>
-              <option value={12}>Ogni anno</option>
-              <option value={24}>Ogni 2 anni</option>
-            </select>
-
-            <button
-              type="button"
-              onClick={addItem}
-              className="flex min-h-[56px] w-full items-center justify-center rounded-3xl bg-blue-500 px-4 py-4 text-base font-bold text-white shadow-lg active:scale-[0.98]"
-            >
-              Aggiungi manutenzione
-            </button>
-          </div>
-        </Card>
+        {status && (
+          <p className="mt-3 text-center text-xs text-zinc-500">{status}</p>
+        )}
 
         <div className="mt-6 space-y-3">
-          {sortedItems.length === 0 ? (
+          {items.length === 0 ? (
             <Card>
               <p className="text-sm text-zinc-500">
-                Nessuna manutenzione registrata.
+                Nessuna manutenzione ancora.
               </p>
             </Card>
           ) : (
-            sortedItems.map((item) => {
-              const days = daysUntil(item.dueDate);
-              const isUrgent = days <= 30;
-
-              return (
-                <Card key={item.id}>
+            items.map((item) => (
+              <Card key={item.id}>
+                <div className="space-y-3">
                   <div className="flex items-start gap-3">
-                    <Wrench
-                      size={20}
+                    <button
+                      type="button"
+                      onClick={() => toggleCompleted(item)}
                       className={
-                        isUrgent ? "mt-1 text-orange-500" : "mt-1 text-blue-500"
+                        item.completed
+                          ? "pt-1 text-green-500"
+                          : "pt-1 text-zinc-400"
                       }
-                    />
+                    >
+                      {item.completed ? (
+                        <CheckCircle2 size={24} />
+                      ) : (
+                        <Circle size={24} />
+                      )}
+                    </button>
 
                     <div className="flex-1">
-                      <p className="font-semibold">{item.title}</p>
-
-                      <p className="mt-1 text-sm text-zinc-500">
-                        {item.category}
-                      </p>
+                      <input
+                        value={item.text || ""}
+                        onChange={(e) =>
+                          updateItem(item.id, "text", e.target.value)
+                        }
+                        className="w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm font-semibold"
+                        placeholder="Descrizione"
+                      />
 
                       <p
                         className={
-                          isUrgent
-                            ? "mt-2 text-lg font-black text-orange-500"
-                            : "mt-2 text-lg font-black"
+                          isOverdue(item.due_date)
+                            ? "mt-2 text-sm font-bold text-red-500"
+                            : "mt-2 text-sm text-zinc-500"
                         }
                       >
-                        {days < 0
-                          ? `Scaduta da ${Math.abs(days)} giorni`
-                          : days === 0
-                          ? "Scade oggi"
-                          : `Tra ${days} giorni`}
+                        Scadenza: {formatDate(item.due_date)}
                       </p>
-
-                      <p className="text-xs text-zinc-400">
-                        Prossima scadenza: {item.dueDate}
-                      </p>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => completeItem(item.id)}
-                          className="flex items-center justify-center gap-2 rounded-2xl bg-green-50 p-3 text-sm font-bold text-green-600"
-                        >
-                          <CheckCircle2 size={17} />
-                          Fatto
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => deleteItem(item.id)}
-                          className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-500"
-                        >
-                          <Trash2 size={17} />
-                          Elimina
-                        </button>
-                      </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => deleteItem(item.id)}
+                      className="rounded-full bg-red-50 p-3 text-red-500"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
-                </Card>
-              );
-            })
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={item.category || "Casa"}
+                      onChange={(e) =>
+                        updateItem(item.id, "category", e.target.value)
+                      }
+                      className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                    >
+                      {categories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="date"
+                      value={item.due_date || ""}
+                      onChange={(e) =>
+                        updateItem(item.id, "due_date", e.target.value)
+                      }
+                      className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                    />
+
+                    <input
+                      type="number"
+                      value={item.frequency_months || 12}
+                      onChange={(e) =>
+                        updateItem(
+                          item.id,
+                          "frequency_months",
+                          e.target.value
+                        )
+                      }
+                      className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                      placeholder="Frequenza mesi"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => completeItem(item)}
+                      className="rounded-2xl bg-green-50 p-3 text-sm font-bold text-green-600"
+                    >
+                      Eseguita
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            ))
           )}
         </div>
       </div>

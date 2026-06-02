@@ -1,110 +1,138 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import Card from "@/components/Card";
-import { CalendarDays, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { CalendarDays, Trash2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-type EventItem = {
+type CalendarItem = {
   id: number;
-  title: string;
-  date: string;
-  time: string;
-  category: string;
-  createdAt: string;
+  text: string;
+  date: string | null;
+  time: string | null;
+  category: string | null;
+  created_at: string;
 };
 
-const STORAGE_KEY = "cocciolapp_events";
+const categories = ["Famiglia", "Salute", "Casa", "Lavoro", "Scadenze", "Altro"];
 
-const categories = ["Famiglia", "Marco", "Lavoro", "Casa", "Viaggi", "Salute", "Altro"];
+function todayDate() {
+  return new Date().toISOString().split("T")[0];
+}
 
-function formatDate(date: Date) {
+function addDays(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
   return date.toISOString().split("T")[0];
 }
 
+function formatDate(dateText: string | null) {
+  if (!dateText) return "Nessuna data";
+  return new Date(dateText).toLocaleDateString("it-IT");
+}
+
 export default function CalendarPage() {
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
-  const [visibleMonth, setVisibleMonth] = useState(new Date());
+  const [items, setItems] = useState<CalendarItem[]>([]);
+  const [text, setText] = useState("");
+  const [date, setDate] = useState(todayDate());
+  const [time, setTime] = useState("");
+  const [category, setCategory] = useState("Famiglia");
+  const [status, setStatus] = useState("");
+
+  async function loadItems() {
+    const { data, error } = await supabase
+      .from("calendar")
+      .select("*")
+      .order("date", { ascending: true })
+      .order("time", { ascending: true });
+
+    if (error) {
+      setStatus("Errore nel caricamento calendario");
+      console.error(error);
+      return;
+    }
+
+    setItems(data || []);
+  }
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) setEvents(JSON.parse(saved));
+    loadItems();
   }, []);
 
-  function saveEvents(next: EventItem[]) {
-    setEvents(next);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  async function addItem(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    const { error } = await supabase.from("calendar").insert({
+      id: Date.now(),
+      text: cleanText,
+      date,
+      time: time || null,
+      category,
+      created_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      setStatus("Errore salvataggio evento");
+      console.error(error);
+      return;
+    }
+
+    setText("");
+    setTime("");
+    setCategory("Famiglia");
+    setStatus("Evento aggiunto");
+    loadItems();
   }
 
-  function deleteEvent(id: number) {
-    saveEvents(events.filter((event) => event.id !== id));
+  async function updateItem(
+    id: number,
+    field: "text" | "date" | "time" | "category",
+    value: string
+  ) {
+    const { error } = await supabase
+      .from("calendar")
+      .update({
+        [field]: value || null,
+      })
+      .eq("id", id);
+
+    if (error) {
+      setStatus("Errore aggiornamento evento");
+      console.error(error);
+      return;
+    }
+
+    loadItems();
   }
 
-  function updateEvent(id: number, category: string) {
-    saveEvents(
-      events.map((event) =>
-        event.id === id ? { ...event, category } : event
-      )
-    );
+  async function deleteItem(id: number) {
+    const { error } = await supabase.from("calendar").delete().eq("id", id);
+
+    if (error) {
+      setStatus("Errore eliminazione evento");
+      console.error(error);
+      return;
+    }
+
+    loadItems();
   }
 
-  function goToPreviousMonth() {
-    setVisibleMonth(
-      new Date(
-        visibleMonth.getFullYear(),
-        visibleMonth.getMonth() - 1,
-        1
-      )
-    );
-  }
+  const today = todayDate();
+  const next7 = addDays(7);
 
-  function goToNextMonth() {
-    setVisibleMonth(
-      new Date(
-        visibleMonth.getFullYear(),
-        visibleMonth.getMonth() + 1,
-        1
-      )
-    );
-  }
+  const todayItems = items.filter((item) => item.date === today);
 
-  function goToToday() {
-    const today = new Date();
-    setVisibleMonth(today);
-    setSelectedDate(formatDate(today));
-  }
-
-  const year = visibleMonth.getFullYear();
-  const month = visibleMonth.getMonth();
-
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-
-  const daysInMonth = Array.from(
-    { length: lastDay.getDate() },
-    (_, i) => new Date(year, month, i + 1)
+  const nextItems = items.filter(
+    (item) => item.date && item.date > today && item.date <= next7
   );
 
-  const emptyDays = Array.from({
-    length: firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1,
-  });
+  const futureItems = items.filter((item) => item.date && item.date > next7);
 
-  const today = formatDate(new Date());
-
-  const selectedEvents = events
-    .filter((event) => event.date === selectedDate)
-    .sort((a, b) =>
-      (a.time || "00:00").localeCompare(b.time || "00:00")
-    );
-
-  const upcomingEvents = [...events]
-    .filter((event) => event.date >= today)
-    .sort((a, b) =>
-      `${a.date}T${a.time || "00:00"}`.localeCompare(
-        `${b.date}T${b.time || "00:00"}`
-      )
-    );
+  const noDateItems = items.filter((item) => !item.date);
 
   return (
     <AppShell>
@@ -113,193 +141,194 @@ export default function CalendarPage() {
           Famiglia Coccioli
         </p>
 
-        <h1 className="mt-1 text-4xl font-black tracking-tight">
-          Agenda
-        </h1>
+        <h1 className="mt-1 text-4xl font-black tracking-tight">Agenda</h1>
 
         <p className="mt-2 text-sm text-zinc-500">
-          Tocca un giorno per vedere gli eventi.
+          Eventi e appuntamenti sincronizzati con Supabase.
         </p>
 
         <Card className="mt-6">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={goToPreviousMonth}
-              className="rounded-full bg-zinc-100 p-3"
-            >
-              <ChevronLeft size={20} />
-            </button>
+          <form onSubmit={addItem} className="space-y-4">
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Es. pediatra Marco, cena, scadenza..."
+              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
+            />
 
-            <div className="text-center">
-              <h2 className="text-lg font-black capitalize">
-                {visibleMonth.toLocaleString("it-IT", {
-                  month: "long",
-                  year: "numeric",
-                })}
-              </h2>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
+              />
+
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base outline-none"
+              />
+            </div>
+
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-3xl border border-black/10 bg-zinc-50 p-4 text-base"
+            >
+              {categories.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="submit"
+              className="flex min-h-[56px] w-full items-center justify-center gap-2 rounded-3xl bg-green-500 px-4 py-4 text-base font-bold text-white shadow-lg active:scale-[0.98]"
+            >
+              <CalendarDays size={22} />
+              Aggiungi evento
+            </button>
+          </form>
+
+          {status && (
+            <p className="mt-3 text-center text-xs text-zinc-500">{status}</p>
+          )}
+        </Card>
+
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Card className="bg-gradient-to-br from-green-50 to-emerald-100">
+            <p className="text-sm font-semibold text-green-700">Oggi</p>
+            <p className="mt-2 text-3xl font-black">{todayItems.length}</p>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-blue-50 to-sky-100">
+            <p className="text-sm font-semibold text-blue-700">
+              Prossimi 7 giorni
+            </p>
+            <p className="mt-2 text-3xl font-black">{nextItems.length}</p>
+          </Card>
+        </div>
+
+        <CalendarSection
+          title="Oggi"
+          items={todayItems}
+          onUpdate={updateItem}
+          onDelete={deleteItem}
+        />
+
+        <CalendarSection
+          title="Prossimi 7 giorni"
+          items={nextItems}
+          onUpdate={updateItem}
+          onDelete={deleteItem}
+        />
+
+        <CalendarSection
+          title="Più avanti"
+          items={futureItems}
+          onUpdate={updateItem}
+          onDelete={deleteItem}
+        />
+
+        <CalendarSection
+          title="Senza data"
+          items={noDateItems}
+          onUpdate={updateItem}
+          onDelete={deleteItem}
+        />
+      </div>
+    </AppShell>
+  );
+}
+
+function CalendarSection({
+  title,
+  items,
+  onUpdate,
+  onDelete,
+}: {
+  title: string;
+  items: CalendarItem[];
+  onUpdate: (
+    id: number,
+    field: "text" | "date" | "time" | "category",
+    value: string
+  ) => void;
+  onDelete: (id: number) => void;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <h2 className="text-lg font-bold">{title}</h2>
+
+      <div className="mt-3 space-y-3">
+        {items.map((item) => (
+          <Card key={item.id}>
+            <div className="flex items-start gap-3">
+              <CalendarDays size={20} className="mt-1 text-green-500" />
+
+              <div className="flex-1">
+                <input
+                  value={item.text || ""}
+                  onChange={(e) => onUpdate(item.id, "text", e.target.value)}
+                  className="w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm font-semibold"
+                />
+
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={item.date || ""}
+                    onChange={(e) =>
+                      onUpdate(item.id, "date", e.target.value)
+                    }
+                    className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                  />
+
+                  <input
+                    type="time"
+                    value={item.time || ""}
+                    onChange={(e) =>
+                      onUpdate(item.id, "time", e.target.value)
+                    }
+                    className="rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                  />
+                </div>
+
+                <select
+                  value={item.category || "Famiglia"}
+                  onChange={(e) =>
+                    onUpdate(item.id, "category", e.target.value)
+                  }
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
+                >
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-2 text-xs text-zinc-400">
+                  {formatDate(item.date)}
+                  {item.time ? ` · ${item.time}` : ""}
+                </p>
+              </div>
 
               <button
                 type="button"
-                onClick={goToToday}
-                className="mt-1 text-xs font-bold text-blue-500"
+                onClick={() => onDelete(item.id)}
+                className="rounded-full bg-red-50 p-3 text-red-500"
               >
-                Oggi
+                <Trash2 size={18} />
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={goToNextMonth}
-              className="rounded-full bg-zinc-100 p-3"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-2 text-center text-xs font-bold text-zinc-400">
-            <span>L</span>
-            <span>M</span>
-            <span>M</span>
-            <span>G</span>
-            <span>V</span>
-            <span>S</span>
-            <span>D</span>
-          </div>
-
-          <div className="mt-3 grid grid-cols-7 gap-2">
-            {emptyDays.map((_, index) => (
-              <div key={`empty-${index}`} />
-            ))}
-
-            {daysInMonth.map((day) => {
-              const dayText = formatDate(day);
-              const hasEvent = events.some((event) => event.date === dayText);
-              const isToday = dayText === today;
-              const isSelected = dayText === selectedDate;
-
-              return (
-                <button
-                  key={dayText}
-                  type="button"
-                  onClick={() => setSelectedDate(dayText)}
-                  className={
-                    isSelected
-                      ? "flex h-11 flex-col items-center justify-center rounded-2xl bg-blue-500 text-white"
-                      : isToday
-                      ? "flex h-11 flex-col items-center justify-center rounded-2xl bg-blue-100 text-blue-700"
-                      : "flex h-11 flex-col items-center justify-center rounded-2xl bg-zinc-50"
-                  }
-                >
-                  <span className="text-sm font-bold">
-                    {day.getDate()}
-                  </span>
-
-                  {hasEvent && (
-                    <span
-                      className={
-                        isSelected
-                          ? "mt-1 h-1 w-1 rounded-full bg-white"
-                          : "mt-1 h-1 w-1 rounded-full bg-blue-500"
-                      }
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-
-        <div className="mt-6">
-          <h2 className="text-lg font-bold">
-            Eventi del giorno selezionato
-          </h2>
-
-          <div className="mt-3 space-y-3">
-            {selectedEvents.length === 0 ? (
-              <Card>
-                <p className="text-sm text-zinc-500">
-                  Nessun evento in questo giorno.
-                </p>
-              </Card>
-            ) : (
-              selectedEvents.map((event) => (
-                <Card key={event.id}>
-                  <div className="flex items-start gap-3">
-                    <CalendarDays
-                      size={20}
-                      className="mt-1 text-blue-500"
-                    />
-
-                    <div className="flex-1">
-                      <p className="font-semibold">
-                        {event.title}
-                      </p>
-
-                      <p className="mt-1 text-lg font-black">
-                        {event.time || "Tutto il giorno"}
-                      </p>
-
-                      <select
-                        value={event.category}
-                        onChange={(e) =>
-                          updateEvent(event.id, e.target.value)
-                        }
-                        className="mt-3 w-full rounded-2xl border border-black/10 bg-zinc-50 p-3 text-sm"
-                      >
-                        {categories.map((category) => (
-                          <option key={category} value={category}>
-                            {category}
-                          </option>
-                        ))}
-                      </select>
-
-                      <p className="mt-2 text-xs text-zinc-400">
-                        Creato il {event.createdAt}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => deleteEvent(event.id)}
-                      className="rounded-full bg-red-50 p-3 text-red-500"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <h2 className="text-lg font-bold">Prossimi eventi</h2>
-
-          <div className="mt-3 space-y-3">
-            {upcomingEvents.length === 0 ? (
-              <Card>
-                <p className="text-sm text-zinc-500">
-                  Nessun evento futuro.
-                </p>
-              </Card>
-            ) : (
-              upcomingEvents.map((event) => (
-                <Card key={event.id}>
-                  <p className="font-semibold">
-                    {event.title}
-                  </p>
-
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {event.date}
-                    {event.time ? ` · ${event.time}` : ""} · {event.category}
-                  </p>
-                </Card>
-              ))
-            )}
-          </div>
-        </div>
+          </Card>
+        ))}
       </div>
-    </AppShell>
+    </div>
   );
 }
